@@ -1,0 +1,77 @@
+import streamlit as st
+import pandas as pd
+
+st.set_page_config(layout="wide")
+st.title("⚽ Scouting – Centre Back Role Profiles")
+
+uploaded = st.file_uploader("Upload Wyscout CSV", type=["csv"])
+
+if uploaded:
+    df = pd.read_csv(uploaded)
+
+    # ---- FILTER MITTBACKAR ----
+    df = df[df["Position"].str.contains("CB", na=False)]
+
+    st.subheader("Raw CB data")
+    st.dataframe(df)
+
+    # ---- NORMALISERA (PERCENTILER) ----
+    kpis = [
+        "Through_Passes_90",
+        "Prog_Passes_90",
+        "Duels_Won_Pct",
+        "Interceptions_90"
+    ]
+
+    for kpi in kpis:
+        df[kpi + "_P"] = df[kpi].rank(pct=True)
+
+    # ---- ROLE WEIGHTS ----
+    roles = {
+        "Ball Playing CB": {
+            "Through_Passes_90_P": 0.35,
+            "Prog_Passes_90_P": 0.35,
+            "Interceptions_90_P": 0.15,
+            "Duels_Won_Pct_P": 0.15,
+        },
+        "Physical Defender": {
+            "Duels_Won_Pct_P": 0.50,
+            "Interceptions_90_P": 0.30,
+            "Prog_Passes_90_P": 0.10,
+            "Through_Passes_90_P": 0.05,
+        },
+        "Wide CB": {
+            "Prog_Passes_90_P": 0.25,
+            "Through_Passes_90_P": 0.25,
+            "Duels_Won_Pct_P": 0.25,
+            "Interceptions_90_P": 0.25,
+        }
+    }
+
+    # ---- SCORE FUNCTION ----
+    def score(row, role):
+        return sum(row[k] * w for k, w in roles[role].items())
+
+    for role in roles:
+        df[role] = df.apply(score, axis=1, role=role)
+
+    # ---- BEST ROLE ----
+    df["Best Role"] = df[list(roles.keys())].idxmax(axis=1)
+
+    # ---- UI ----
+    role_choice = st.selectbox("Sort by role", list(roles.keys()))
+    df = df.sort_values(role_choice, ascending=False)
+
+    def color(val):
+        if val >= 0.66:
+            return "background-color:#7CFC98"
+        elif val >= 0.4:
+            return "background-color:#87CEFA"
+        else:
+            return "background-color:#FF7F7F"
+
+    st.subheader("CB Role Ranking")
+    st.dataframe(
+        df[["Player", "Position", role_choice, "Best Role"]]
+        .style.applymap(color, subset=[role_choice])
+    )
