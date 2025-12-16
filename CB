@@ -1,0 +1,111 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+
+st.set_page_config(layout="wide")
+st.title("⚽ Scouting – Role-based KPI model")
+
+# ---- LOAD DATA ----
+uploaded_file = st.file_uploader("Upload Wyscout CSV", type=["csv", "xlsx"])
+
+if uploaded_file:
+    if uploaded_file.name.endswith("csv"):
+        df = pd.read_csv(uploaded_file)
+    else:
+        df = pd.read_excel(uploaded_file)
+
+    st.subheader("Raw data")
+    st.dataframe(df)
+
+    # ---- POSITION GROUPING ----
+    def lagdel(pos):
+        if "CB" in pos:
+            return "Mittback"
+        elif any(x in pos for x in ["DM", "CM", "AM"]):
+            return "Mittfält"
+        elif any(x in pos for x in ["FW", "ST", "LW", "RW"]):
+            return "Anfall"
+        else:
+            return "Övrigt"
+
+    df["Lagdel"] = df["Position"].astype(str).apply(lagdel)
+
+    # ---- NORMALISATION (PERCENTILES) ----
+    kpis = [
+        "Through_Passes_90",
+        "Prog_Passes_90",
+        "Duels_Won_Pct",
+        "Interceptions_90",
+        "xG_90"
+    ]
+
+    norm_df = df.copy()
+    for kpi in kpis:
+        norm_df[kpi + "_P"] = df[kpi].rank(pct=True)
+
+    # ---- ROLE WEIGHTS ----
+    weights = {
+        "Ball Playing CB": {
+            "Through_Passes_90_P": 0.30,
+            "Prog_Passes_90_P": 0.30,
+            "Duels_Won_Pct_P": 0.20,
+            "Interceptions_90_P": 0.15,
+            "xG_90_P": 0.05,
+        },
+        "Defending CB": {
+            "Through_Passes_90_P": 0.00,
+            "Prog_Passes_90_P": 0.00,
+            "Duels_Won_Pct_P": 0.40,
+            "Interceptions_90_P": 0.35,
+            "xG_90_P": 0.00,
+        }
+    }
+
+    # ---- ROLE SCORE FUNCTION ----
+    def role_score(row, role):
+        return sum(row[k] * w for k, w in weights[role].items())
+
+    for role in weights:
+        norm_df[role] = norm_df.apply(role_score, axis=1, role=role)
+
+    # ---- FILTER UI ----
+    st.subheader("Filters")
+
+    lagdel_filter = st.selectbox(
+        "Lagdel",
+        ["Alla"] + sorted(norm_df["Lagdel"].unique())
+    )
+
+    role_filter = st.selectbox(
+        "Sort by role",
+        list(weights.keys())
+    )
+
+    view_df = norm_df.copy()
+
+    if lagdel_filter != "Alla":
+        view_df = view_df[view_df["Lagdel"] == lagdel_filter]
+
+    view_df = view_df.sort_values(role_filter, ascending=False)
+
+    # ---- COLOR FUNCTION ----
+    def color_role(val):
+        if val >= 0.66:
+            return "background-color: #7CFC98"  # green
+        elif val >= 0.4:
+            return "background-color: #87CEFA"  # blue
+        else:
+            return "background-color: #FF7F7F"  # red
+
+    st.subheader("Role ranking")
+
+    display_cols = [
+        "Player", "Position", "Lagdel",
+        role_filter
+    ]
+
+    st.dataframe(
+        view_df[display_cols]
+        .style
+        .applymap(color_role, subset=[role_filter])
+    )
